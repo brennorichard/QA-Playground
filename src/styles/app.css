@@ -1,0 +1,5 @@
+/* Ajustes só do app (o restante vem do protótipo, em global.css) */
+
+.conteudo-portao { margin: 0 auto; }
+.carregando { padding: 2rem; color: var(--muted); }
+.btn[aria-busy="true"] { cursor: progress; }
