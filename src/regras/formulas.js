@@ -39,3 +39,6 @@ export function erroTamanhoNome(nome) {
   if (n.length > NOME_HEROI_MAX) return 'Use no máximo 40 caracteres.';
   return '';
 }
+
+// Ferido: HP atual abaixo de 30% do máximo. Não parte em missão nem luta na arena.
+export function ferido(h) { return h.hpAtual * 10 < hpMax(h) * 3; }

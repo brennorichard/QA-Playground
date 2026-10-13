@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Escudo from '../../components/Escudo';
 import Icone from '../../components/Icone';
 import Medidor from '../../components/Medidor';
@@ -154,6 +155,14 @@ export default function Ficha() {
               <p className="vantagem"><strong>{c.vantagem.nome}</strong> ({c.nome}). {c.vantagem.texto}</p></div>
             <div className="vantagem-item" data-cy="vantagem-raca"><span className="raca-icone"><Icone nome={rc.icone} /></span>
               <p className="vantagem"><strong>{rc.vantagem.nome}</strong> ({rc.nome}). {rc.vantagem.texto}</p></div>
+          </div>
+        </section>
+        <section className="painel"><h2>Atalhos</h2>
+          <div className="atalhos">
+            <Link className="btn" to="/inventario" data-cy="link-inventario"><Icone nome="knapsack" />Abrir inventário</Link>
+            <Link className="btn" to="/missoes" data-cy="link-missoes"><Icone nome="treasure-map" />Partir em missão</Link>
+            <Link className="btn" to="/arena" data-cy="link-arena"><Icone nome="crossed-swords" />Ir à arena</Link>
+            <Link className="btn" to="/taverna" data-cy="link-taverna"><Icone nome="beer-stein" />Descansar na taverna</Link>
           </div>
         </section>
       </div>
