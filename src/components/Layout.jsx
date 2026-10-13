@@ -4,10 +4,15 @@ import { useJogo } from '../contexto/Jogo';
 import Escudo from './Escudo';
 import Icone from './Icone';
 
-// Menu: só as telas já implementadas (as das fases 2 e 3 entram quando ficarem prontas)
+// Menu lateral, na ordem do protótipo
 const MENU = [
   { rota: '/heroi', titulo: 'Ficha do herói', icone: 'scroll-quill', cy: 'nav-heroi' },
   { rota: '/hall-da-fama', titulo: 'Hall da Fama', icone: 'laurels-trophy', cy: 'nav-hall-da-fama' },
+  { rota: '/inventario', titulo: 'Inventário', icone: 'knapsack', cy: 'nav-inventario' },
+  { rota: '/mercador', titulo: 'Mercador', icone: 'shop', cy: 'nav-mercador' },
+  { rota: '/taverna', titulo: 'Taverna', icone: 'beer-stein', cy: 'nav-taverna' },
+  { rota: '/missoes', titulo: 'Quadro de missões', icone: 'treasure-map', cy: 'nav-missoes' },
+  { rota: '/arena', titulo: 'Arena', icone: 'crossed-swords', cy: 'nav-arena' },
   { rota: '/configuracoes', titulo: 'Configurações', icone: 'cog', cy: 'nav-configuracoes' }
 ];
 

@@ -20,9 +20,9 @@ Aplicação web de RPG simples, com operações de CRUD, criada como **playgroun
 Motivos principais do ADR-002:
 
 - Sem back-end próprio para manter.
-- O front faz requisições HTTP reais à API REST do Supabase, então `cy.intercept` e `cy.request` funcionam normalmente.
+- O front faz requisições HTTP reais à API REST do Supabase, que os testes E2E podem interceptar e chamar diretamente.
 - O MongoDB Atlas não serve sem back-end: o Atlas Data API foi removido em 30/09/2025, e a credencial ficaria exposta no front.
-- Firebase foi descartado porque o SDK do Firestore usa canais de streaming, o que dificulta o `cy.intercept`.
+- Firebase foi descartado porque o SDK do Firestore usa canais de streaming, o que dificulta interceptar as requisições nos testes.
 
 Os ADRs completos ficam em `docs/adr/`.
 
@@ -31,13 +31,13 @@ Os ADRs completos ficam em `docs/adr/`.
 - **Front:** React (via Vite), React Router com `HashRouter`, `@supabase/supabase-js`.
 - **Banco, login e API:** Supabase (plano gratuito), com Row Level Security em todas as tabelas.
 - **Hospedagem:** GitHub Pages (repositório público no plano gratuito).
-- **Testes:** Cypress (E2E, testes de API com `cy.request` e component testing).
+- **Testes:** a automação E2E fica em outro repositório, feito na mentoria (ver seção 8).
 - **CI/CD:** GitHub Actions.
 
 ### Limites dos planos gratuitos que afetam o projeto
 
 - **Supabase:** projetos com pouca atividade por 7 dias são pausados (podem ser retomados pelo painel); 500 MB de banco; 5 GB de egress por mês; 50 mil usuários ativos por mês; sem backups retidos.
-- **Supabase Auth:** o envio de e-mail embutido permite só **2 e-mails por hora** no projeto inteiro. Para o playground, desligar a confirmação de e-mail ou configurar SMTP próprio. O endpoint `/auth/v1/token` aceita 1.800 requisições por hora por IP, com picos de até 30: nos testes, obter o token uma vez por spec.
+- **Supabase Auth:** o envio de e-mail embutido permite só **2 e-mails por hora** no projeto inteiro. Para o playground, desligar a confirmação de e-mail ou configurar SMTP próprio. O endpoint `/auth/v1/token` aceita 1.800 requisições por hora por IP, com picos de até 30: quem automatiza testes deve obter o token uma vez e reaproveitá-lo.
 - **GitHub Pages:** limite flexível de 100 GB de banda por mês; só arquivos estáticos; não redireciona rotas desconhecidas para o `index.html` (por isso `HashRouter`).
 - **GitHub Actions:** em repositório público, workflows agendados são desativados após 60 dias sem atividade no repositório.
 
@@ -178,7 +178,7 @@ Princípios:
 
 A fonte da verdade são os arquivos versionados (não duplicar o SQL aqui):
 
-- [`supabase/schema.sql`](supabase/schema.sql): tabelas `perfis`, `herois`, `itens`, `inventario`, `missoes` e `missoes_ativas`; funções de regra (`bonus_raca`, `atributo_efetivo`, `hp_max`, `preco_para`, `xp_missao`, `recarga_taverna`, `heroi_em_missao`); RPCs já implementadas (`criar_personagem`, `subir_nivel`); trigger `criar_perfil` (cria o perfil no cadastro a partir de `nome_exibicao` em `options.data` do `signUp`); políticas de RLS; grants; view `hall_da_fama`.
+- [`supabase/schema.sql`](supabase/schema.sql): tabelas `perfis`, `herois`, `itens`, `inventario`, `missoes` e `missoes_ativas`; funções de regra (`bonus_raca`, `atributo_efetivo`, `hp_max`, `preco_para`, `xp_missao`, `recarga_taverna`, `heroi_em_missao`, `ferido`); todas as RPCs da tabela abaixo; trigger `criar_perfil` (cria o perfil no cadastro a partir de `nome_exibicao` em `options.data` do `signUp`); políticas de RLS; grants; view `hall_da_fama`.
 - [`supabase/seed.sql`](supabase/seed.sql): catálogo de itens e de missões (mesmos dados das tabelas da seção 4).
 
 Pontos do esquema que afetam o front e os testes:
@@ -191,7 +191,7 @@ Pontos do esquema que afetam o front e os testes:
 - Recusas vindas de constraints chegam com a mensagem em português e o nome da constraint em `details` (útil nos testes de API).
 - A view `hall_da_fama` expõe `posicao_nivel` e `posicao_missoes`, calculadas sobre todos os heróis. Filtros aplicados pela API não mudam a posição, e "Seu herói está em Xº lugar" vem da linha com `meu = true`.
 
-### Funções RPC a implementar
+### Funções RPC
 
 Todas `security definer`, com `set search_path = ''`, operando sempre no herói de `auth.uid()` e lançando erros com mensagens claras em português (o front exibe a mensagem no toast).
 
@@ -202,14 +202,16 @@ Todas `security definer`, com `set search_path = ''`, operando sempre no herói 
 | `comprar_item` | item_id | Cobra `preco_para(classe, preco)`; ouro suficiente e menos de 10 itens; debita e insere na mesma transação. |
 | `equipar_item` | inventario_id | Item do próprio herói, não consumível; alterna; se for arma, desequipa a anterior. |
 | `usar_item` | inventario_id | Consumível; HP abaixo do máximo; cura até o máximo e remove o item. |
-| `descansar` | — | Fora de missão; `now()` ≥ `descanso_disponivel_em`; HP = máximo; recarga = `now()` + `recarga_taverna(classe)`. |
+| `descansar` | — | Fora de missão; `now()` ≥ `descanso_disponivel_em`; HP abaixo do máximo; HP = máximo; recarga = `now()` + `recarga_taverna(classe)`. |
 | `enviar_missao` | missao_id | Sem missão ativa; HP ≥ 30% do máximo. |
 | `coletar_recompensa` | — | `now()` ≥ início + duração; soma ouro, `xp_missao(classe, xp)` e missões; apaga a missão ativa. |
 | `registrar_combate` | monstro, resultado, hp_final | Fora de missão; herói não ferido (o HP salvo no banco é o de antes do combate, então a função checa HP atual ≥ 30% do máximo); resultado em vitória, derrota ou fuga; HP final entre 1 e o máximo; vitória soma XP e ouro do monstro. |
 
 Em todas as funções, "máximo" é `hp_max(classe, raca, constituicao, nivel)`.
 
-Ponto de atenção: o d20 da criação e o combate (incluindo Pele de ferro e Olho de águia) são resolvidos no front de propósito, para permitir `cy.stub` no `Math.random`. Isso permite trapaça, o que é aceitável num playground. As funções só validam limites.
+Todas estão implementadas. As das fases 2 e 3 ficam nos blocos "Fase 2" e "Fase 3" do fim do `schema.sql`, com `create or replace`, para rodar só o bloco num projeto existente. Retornos: `equipar_item` devolve a linha de `inventario`, `enviar_missao` a de `missoes_ativas` e as demais o herói atualizado. Descartar item não tem RPC: é um `DELETE` em `inventario`, liberado pelo RLS. Em `registrar_combate`, a derrota grava HP 1 independentemente do `hp_final` enviado, e as recompensas dos monstros estão na própria função (mesma tabela de `src/regras/combate.js`).
+
+Ponto de atenção: o d20 da criação e o combate (incluindo Pele de ferro e Olho de águia) são resolvidos no front de propósito, para que os testes possam controlar o `Math.random`. Isso permite trapaça, o que é aceitável num playground. As funções só validam limites.
 
 ## 7. Front-end
 
@@ -235,9 +237,6 @@ Ponto de atenção: o d20 da criação e o combate (incluindo Pele de ferro e Ol
 │  ├─ regras/                   constantes do jogo (classes, raças, monstros, fórmulas)
 │  ├─ pages/                    uma pasta por tela
 │  └─ main.jsx                  HashRouter
-├─ cypress/
-│  ├─ e2e/  component/  fixtures/
-│  └─ support/commands.js
 └─ .github/workflows/           deploy.yml, keep-alive.yml
 ```
 
@@ -279,11 +278,13 @@ Ponto de atenção: o d20 da criação e o combate (incluindo Pele de ferro e Ol
 
 O repositório oficial dos ícones é `github.com/game-icons/icons` (pastas por autor, SVGs com fundo preto e desenho branco: remover o path de fundo `M0 0h512v512H0z` e trocar `fill="#fff"` por `currentColor`).
 
-## 8. Testes com Cypress
+## 8. Testabilidade
+
+A automação dos testes **não fica neste repositório**: ela é feita durante a mentoria, em um repositório separado que roda sobre o Quality Quest. Aqui não entram ferramentas, specs, comandos nem roteiros de teste; o papel deste projeto é ser um app testável.
 
 ### Convenção de seletores
 
-Todo elemento interativo ou verificado em teste recebe `data-cy` em kebab-case, com prefixo pelo tipo:
+Todo elemento interativo ou verificável recebe `data-cy` em kebab-case, com prefixo pelo tipo:
 
 - `btn-` botões, `input-` campos, `select-` selects, `opcao-` radios, `link-` links, `nav-` itens de menu, `filtro-` filtros;
 - `toast-sucesso` e `toast-erro` para avisos; `modal-confirmacao`, `btn-modal-confirmar`, `btn-modal-cancelar`, `input-confirmacao` no modal;
@@ -291,61 +292,23 @@ Todo elemento interativo ou verificado em teste recebe `data-cy` em kebab-case, 
 
 O protótipo já define os `data-cy` de cada tela e tem a chave "Mostrar data-cy" para visualizá-los.
 
-### Estratégia
+### Decisões que existem para permitir testes
 
-- **Usuário de teste dedicado**, com credenciais nas variáveis do Cypress.
-- **Login:** `cy.session`, obtendo o token uma vez por spec.
-- **Preparar e limpar dados:** operações privilegiadas (resetar o herói de teste, criar missão com início no passado) via `cy.task`, rodando no Node com a chave secreta. Assim ela não chega ao navegador do Cypress.
-- **Rede:** `cy.intercept` para aguardar chamadas (`**/rest/v1/**`, `**/rest/v1/rpc/**`) e simular erro 500, lentidão e lista vazia.
-- **Aleatoriedade:** `cy.stub(win.Math, 'random')` para o d20 e o combate. Para Halfling, o stub precisa devolver dois valores (`.onFirstCall()` / `.onSecondCall()`); para Arqueiro, um 19 natural deve dar crítico.
-- **Tempo:** `cy.clock` e `cy.tick` para a recarga da taverna. Ponto importante: o `cy.clock` só controla o relógio do navegador, e o banco valida com `now()`.
-  - **Taverna:** `cy.tick(30000)` (ou `cy.tick(15000)` para Clérigo) serve para verificar a contagem regressiva e a liberação do botão. Para descansar de novo de verdade, o teste zera `descanso_disponivel_em` via `cy.task` (ou intercepta a RPC). Sem isso, `descansar` é recusada porque os 30 s reais não passaram.
-  - **Missões:** o teste de "missão concluída" precisa criar a missão já vencida (`inicio` no passado) via `cy.task`.
-- **Testes de API (`cy.request`):** provar que as regras valem sem a interface.
-  - Inserir um herói direto na tabela (`POST /rest/v1/herois`) é recusado por permissão: a criação só acontece pela RPC.
-  - Chamar `criar_personagem` quando o jogador já tem herói é recusado (a função verifica, e a constraint `unique (user_id)` garante).
-  - Chamar `criar_personagem` com soma de atributos diferente de 20 (ou de 22 para Humano) é recusado pela constraint `pontos_de_atributo_validos`. Vale testar os dois lados: Humano com 20 é recusado, e Elfo com 22 também.
-  - Chamar `criar_personagem` com `brasao_icone` ou `brasao_cor` fora da lista é recusado pelas check constraints.
-  - `comprar_item` com um Ladino debita o preço com desconto (ex.: 41 pelo escudo de 45).
-  - Alterar `ouro` direto pela API (`PATCH`) é recusado por permissão, porque só `nome` é editável.
-  - Aposentar herói em missão não apaga nada: o RLS não gera erro, então o teste deve verificar que o herói continua existindo.
-- **Component testing:** etapas da criação (validação por etapa, troca de raça reiniciando os pontos, "Sugerir para a classe"), Escudo e Medidor isolados com `cy.mount`.
-- **Auth:** testes de cadastro e "Esqueci minha senha" devem interceptar as chamadas de e-mail, por causa do limite de 2 e-mails por hora.
-
-### Organização dos testes
-
-| Pasta | Rede | Como rodar |
-|---|---|---|
-| `cypress/component/` | não usa | `npm run cy:component` |
-| `cypress/e2e/simulado/` | toda simulada com `cy.intercept` (fixtures em `cypress/fixtures/`), sessão falsa com `cy.loginSimulado()` | `npm run dev:cypress` (usa o projeto fictício do `.env.cypress`) e `npm run cy:run` |
-| demais specs em `cypress/e2e/` (a criar) | Supabase real, login com `cy.login()` | `npm run dev` (com `.env` real) e `npm run cy:run` |
-
-- Comandos de apoio em `cypress/support/commands.js`: `cy.login()`, `cy.loginSimulado()` e `cy.dataCy('...')`.
-- Tarefas Node em `cypress.config.js`: `resetarHeroi(email)` e `atualizarHeroi({ email, campos })`, ambas com a chave secreta.
-- Em desenvolvimento, o React (`StrictMode`) dispara os efeitos duas vezes. Para esperar a requisição de uma ação, crie um espião com filtro de query logo antes dela (`cy.intercept({ url, query }).as(...)`), em vez de reaproveitar um alias geral.
-
-### Variáveis do Cypress
-
-O Cypress 16 removeu o `Cypress.env()`. Valores públicos são lidos com `Cypress.expose()`, e os sensíveis com `cy.env()`.
-
-| Variável | Onde | Leitura | Uso |
-|---|---|---|---|
-| `CYPRESS_SUPABASE_URL` | Cypress | `Cypress.expose('SUPABASE_URL')` | URL do projeto (sem ela, vale o projeto fictício) |
-| `CYPRESS_SUPABASE_KEY` | Cypress | `Cypress.expose('SUPABASE_KEY')` | Chave pública |
-| `CYPRESS_TEST_EMAIL` | Secret no CI | `cy.env(['TEST_EMAIL'])` | Usuário de teste |
-| `CYPRESS_TEST_PASSWORD` | Secret no CI | `cy.env(['TEST_PASSWORD'])` | Senha do usuário de teste |
-| `SUPABASE_SECRET_KEY` | Secret no CI | `process.env`, só em `cy.task` (Node) | Seed e reset |
+- Toda leitura e escrita passa pela API REST do Supabase (`/rest/v1/...` e `/rest/v1/rpc/...`), sem canais de streaming.
+- O d20 da criação e os dados do combate usam `Math.random` no front (ver `rolar` em `src/regras/formulas.js`).
+- As contagens regressivas (taverna e missões) usam o relógio do navegador (`Date.now()`), enquanto o banco valida com `now()`.
+- As recusas das funções RPC chegam com a mensagem em português; as que vêm de constraints trazem o nome da constraint em `details`.
 
 ## 9. CI/CD
 
-- **`deploy.yml` (push na `main`):** instalar → build → rodar o Cypress → publicar no GitHub Pages **somente se a suíte passar**.
-- **`keep-alive.yml` (cron diário):** rodar a suíte ou uma consulta simples na API para evitar a pausa do Supabase por inatividade.
+- **`deploy.yml` (push na `main`):** instalar → build → publicar no GitHub Pages.
+- **`keep-alive.yml` (cron diário):** uma consulta simples na API para evitar a pausa do Supabase por inatividade.
 
 ## 10. Roteiro
 
-1. **MVP:** Portão, Ficha do herói (com a criação), Hall da Fama e Configurações (sem "Excluir conta", em aberto). Esquema, RLS, seed, `criar_personagem` e `subir_nivel`. **Implementado** (06/10/2026); faltam os workflows de CI e os testes contra o Supabase real.
-2. **Fase 2:** Inventário, Mercador, Taverna e as RPCs correspondentes.
-3. **Fase 3:** Quadro de missões e Arena.
+1. **MVP:** Portão, Ficha do herói (com a criação), Hall da Fama e Configurações (sem "Excluir conta", em aberto). Esquema, RLS, seed, `criar_personagem` e `subir_nivel`. **Implementado** (06/10/2026).
+2. **Fase 2:** Inventário, Mercador, Taverna e as RPCs correspondentes. **Implementado** (13/10/2026).
+3. **Fase 3:** Quadro de missões e Arena. **Implementado** (13/10/2026).
 
 ## 11. Em aberto
 
@@ -358,8 +321,9 @@ O Cypress 16 removeu o `Cypress.env()`. Valores públicos são lidos com `Cypres
 - Consultar este documento e o protótipo antes de implementar uma tela. O CSS do app (`src/styles/global.css`) é o do protótipo: mudanças visuais entram nos dois.
 - Os ícones de `src/assets/icons/` são os mesmos do protótipo; ícone novo precisa de crédito em `CREDITS.md`.
 - Todo acesso ao Supabase passa por `src/services/`. Componentes nunca chamam o Supabase direto.
-- Regra de negócio nova vai para o banco (constraint, grant ou RPC) e ganha um teste de API correspondente. A validação no front serve para feedback.
+- Regra de negócio nova vai para o banco (constraint, grant ou RPC). A validação no front serve para feedback.
 - Mudanças de banco entram em `supabase/schema.sql` ou `supabase/seed.sql`, versionadas.
 - Manter os `data-cy` do protótipo e seguir a convenção ao criar elementos novos.
+- Não adicionar ferramentas, specs nem roteiros de teste automatizado: isso é feito na mentoria, em outro repositório.
 - Nunca commitar `.env` nem chaves secretas.
 - Textos da interface em português do Brasil.
